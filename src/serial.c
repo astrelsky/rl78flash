@@ -242,3 +242,19 @@ int serial_close(port_handle_t fd)
     }
     return close(fd);
 }
+
+int serial_enable_timeout(port_handle_t fd)
+{
+    struct termios options;
+    tcgetattr(fd, &options);
+    options.c_cc[VTIME] = 1;
+    tcsetattr(fd, TCSANOW, &options);
+}
+
+int serial_disable_timeout(port_handle_t fd)
+{
+    struct termios options;
+    tcgetattr(fd, &options);
+    options.c_cc[VTIME] = 0;
+    tcsetattr(fd, TCSANOW, &options);
+}

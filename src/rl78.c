@@ -22,10 +22,27 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
 #include "wait_kbhit.h"
+
+#define MAX_PASSWORD_LEN    10
+#define OCD_CONNECT_CMD     0x91
+#define OCD_WRITE_CMD       0x93
+#define OCD_EXEC_CMD        0x94
+#define BLOCK_SIZE          1024
+#define MAX_BLOCKS          1024
+#define OCD_EXEC_CMD        0x94
 
 extern int verbose_level;
 static unsigned char communication_mode;
+
+// payload by fail0verflow and wildcard
+static unsigned char shellcode[] = {
+  0xe0, 0x07, 0x26, // 0xF07E0 location, 0x26 length of packet
+  0x41, 0x00, 0x34, 0x00, 0x00, 0x00, 0x11, 0x89, 0xFC, 0xA1, 0xFF, 0x0E, 0xA5, 0x15, 0x44,
+  0x00, 0x00, 0xDF, 0xF3, 0xEF, 0x04, 0x55, 0x00, 0x00, 0x00, 0x8E, 0xFD, 0x81, 0x5C, 0x0F,
+  0x9E, 0xFD, 0x71, 0x00, 0x90, 0x00, 0xEF, 0xE0
+};
 
 static void rl78_set_reset(port_handle_t fd, int mode, int value)
 {
@@ -44,7 +61,12 @@ static void rl78_set_reset(port_handle_t fd, int mode, int value)
 int rl78_reset_init(port_handle_t fd, int wait, int baud, int mode, float voltage)
 {
     unsigned char r;
-    if (MODE_UART_1 == (mode & MODE_UART))
+    if (MODE_DEBUG == (mode & MODE_DEBUG))
+    {
+        r = SET_MODE_DEBUGGER;
+        communication_mode = 1;
+    }
+    else if (MODE_UART_1 == (mode & MODE_UART))
     {
         r = SET_MODE_1WIRE_UART;
         communication_mode = 1;
@@ -802,4 +824,86 @@ int rl78_verify(port_handle_t fd, unsigned int address, const void *data, unsign
         printf("\n");
     }
     return rc;
+}
+
+void rl78_debug_mode(port_handle_t fd, const char *password)
+{
+    unsigned char b = OCD_CONNECT_CMD;
+    unsigned char checksum = 0;
+    
+    serial_write(fd, &b, sizeof(b));
+    serial_read(fd, &b, 1);
+    usleep(1000);
+    
+    // send password
+    for (size_t i = 0; i < MAX_PASSWORD_LEN; i++)
+    {
+        serial_write(fd, &password[i], sizeof(b));
+        serial_read(fd, &b, sizeof(b));
+        checksum += password[i];
+    }
+    checksum -= 1;
+    serial_write(fd, &checksum, sizeof(checksum));
+    serial_read(fd, &checksum, sizeof(checksum));
+    usleep(5000);
+}
+
+static inline int get_percentage(size_t i) {
+    float f = (float) i;
+    float max = MAX_BLOCKS;
+    f = f / max;
+    return f * 100.0f;
+}
+
+static int write_file(port_handle_t fd, const char *path)
+{
+    static unsigned char c[BLOCK_SIZE];
+    FILE* fp = fopen(path, "wb+");
+    if (fp == NULL)
+    {
+        fprintf(stderr, "Unable to open file \"%s\"\n", path);
+        return EIO;
+    }
+    
+    serial_disable_timeout(fd);
+
+    // read remainder of command
+    do {
+        serial_read(fd, c, sizeof(char));
+    } while (c[0] != 0x94);
+    
+    // read last byte before start of dump
+    serial_read(fd, c, sizeof(char));
+    
+    for (size_t i = 0; i < MAX_BLOCKS; i++) {
+        serial_read(fd, c, BLOCK_SIZE);
+        fwrite(c, sizeof(char), BLOCK_SIZE, fp);
+        printf("\rReading %d%%", get_percentage(i));
+    }
+    
+    puts("\rReading 100%");
+    serial_enable_timeout(fd);
+    return 0;
+}
+
+int rl78_read(port_handle_t fd, const char *path)
+{
+    unsigned char b = OCD_WRITE_CMD;
+    
+    serial_write(fd, &b, sizeof(b));
+    serial_read(fd, &b, sizeof(b));
+    usleep(1000);
+    
+    for(size_t i = 0; i < sizeof(shellcode); i++)
+    {
+        serial_write(fd, &shellcode[i], sizeof(b));
+        serial_read(fd, &b, sizeof(b));
+    }
+    usleep(5000);
+    
+    b = OCD_EXEC_CMD;
+    serial_write(fd, &b, sizeof(b));
+    serial_read(fd, &b, sizeof(b));
+    
+    return write_file(fd, path);
 }

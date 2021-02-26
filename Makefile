@@ -1,3 +1,4 @@
+MINGW_GCC = x86_64-w64-mingw32-gcc
 CFLAGS := -O2 -Wall -Wextra -Werror
 LDFLAGS := -s
 LIBS := -lpthread
@@ -13,7 +14,10 @@ OBJS_WIN32 := src/terminal_win32.o src/serial_win32.o
 
 all: rl78flash rl78g10flash
 
-win32: rl78flash.exe rl78g10flash.exe
+set_win32:
+	$(eval CC = $(MINGW_GCC))
+
+win32: set_win32 rl78flash.exe rl78g10flash.exe
 
 rl78flash: $(OBJS) $(OBJS_LINUX)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)

@@ -70,13 +70,7 @@ port_handle_t serial_open(const char *port)
         dcbSerialParams.fOutX = FALSE;
         SetCommState(fd, &dcbSerialParams);
 
-        COMMTIMEOUTS timeouts;
-        timeouts.ReadIntervalTimeout=50;
-        timeouts.ReadTotalTimeoutConstant=50;
-        timeouts.ReadTotalTimeoutMultiplier=10;
-        timeouts.WriteTotalTimeoutConstant=0;
-        timeouts.WriteTotalTimeoutMultiplier=0;
-        SetCommTimeouts(fd, &timeouts);
+        serial_enable_timeout(fd);
         FlushFileBuffers(fd);
     }
     return fd;
@@ -236,4 +230,26 @@ int serial_close(port_handle_t fd)
         printf("\t\tClose port\n");
     }
     return CloseHandle(fd) != 0 ? 0 : -1;
+}
+
+int serial_enable_timeout(port_handle_t fd)
+{
+    COMMTIMEOUTS timeouts;
+    timeouts.ReadIntervalTimeout=50;
+    timeouts.ReadTotalTimeoutConstant=50;
+    timeouts.ReadTotalTimeoutMultiplier=10;
+    timeouts.WriteTotalTimeoutConstant=0;
+    timeouts.WriteTotalTimeoutMultiplier=0;
+    return SetCommTimeouts(fd, &timeouts) == 0;
+}
+
+int serial_disable_timeout(port_handle_t fd)
+{
+    COMMTIMEOUTS timeouts;
+    timeouts.ReadIntervalTimeout=0;
+    timeouts.ReadTotalTimeoutConstant=0;
+    timeouts.ReadTotalTimeoutMultiplier=0;
+    timeouts.WriteTotalTimeoutConstant=0;
+    timeouts.WriteTotalTimeoutMultiplier=0;
+    return SetCommTimeouts(fd, &timeouts) == 0;
 }

@@ -17,6 +17,7 @@
  * IN THE SOFTWARE.                                                                                                  *
  *********************************************************************************************************************/
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -54,6 +55,7 @@ const char *usage =
     "\t-p v\tSpecify power supply voltage\n"
     "\t\t\tdefault: 3.3\n"
     "\t-t baud\tStart terminal with specified baudrate\n"
+    "\t-g\tGlitch Dump\n"
     "\t-h\tDisplay help\n";
 
 int main(int argc, char *argv[])
@@ -72,10 +74,11 @@ int main(int argc, char *argv[])
     int terminal_baud = 0;
     char nodata = 0;
     char nocode = 0;
+    bool debug = false;
 
     char *endp;
     int opt;
-    while ((opt = getopt(argc, argv, "xyab:cvwrdeim:np:t:h?")) != -1)
+    while ((opt = getopt(argc, argv, "g::xyab:cvwrdeim:np:t:h?")) != -1)
     {
         switch (opt)
         {
@@ -164,6 +167,10 @@ int main(int argc, char *argv[])
         case '?':
             printf("%s", usage);
             return ECANCELED;
+        case 'g':
+            debug = true;
+            mode |= MODE_DEBUG;
+            break;
         default:
             fprintf(stderr, "Unknown argument: %c\n", opt);
             printf("%s", usage);
@@ -176,13 +183,20 @@ int main(int argc, char *argv[])
     }
     char *portname = NULL;
     char *filename = NULL;
+    char *password = NULL;
     switch (argc - optind)
     {
+    case 3:
+        password = argv[optind + 2];
+        printf("password: %s\n", password);
+        /* fall-through */
     case 2:
         filename = argv[optind + 1];
+        printf("filename: %s\n", filename);
         /* fall-through */
     case 1:
         portname = argv[optind + 0];
+        printf("portname: %s\n", portname);
         break;
     default:
         printf("%s", usage);
@@ -191,9 +205,15 @@ int main(int argc, char *argv[])
 
     // If file is not specified, but required - show error message
     if (NULL == filename
-        && (1 == write || 1 == verify))
+        && (1 == write || 1 == verify || debug))
     {
         fprintf(stderr, "File not specified\n");
+        return ENOENT;
+    }
+    
+    if (debug && password == NULL)
+    {
+        fprintf(stderr, "Password not specified");
         return ENOENT;
     }
 
@@ -210,7 +230,8 @@ int main(int argc, char *argv[])
         && 0 == erase
         && 0 == reset_after
         && 0 == display_info
-        && 0 == terminal)
+        && 0 == terminal
+        && !debug)
     {
         return 0;
     }
@@ -221,7 +242,8 @@ int main(int argc, char *argv[])
         if (1 == write
             || 1 == erase
             || 1 == verify
-            || 1 == display_info)
+            || 1 == display_info
+            || debug)
         {
             rc = rl78_reset_init(fd, wait, baud, mode, voltage);
             if (0 > rc)
@@ -230,132 +252,145 @@ int main(int argc, char *argv[])
                 retcode = EIO;
                 break;
             }
-            rc = rl78_cmd_reset(fd);
-            if (0 > rc)
-            {
-                fprintf(stderr, "Synchronization failed\n");
-                retcode = EIO;
-                break;
-            }
-            char device_name[11];
-            unsigned int code_size, data_size;
-            rc = rl78_cmd_silicon_signature(fd, device_name, &code_size, &data_size);
-            if (0 > rc)
-            {
-                fprintf(stderr, "Silicon signature read failed\n");
-                retcode = EIO;
-                break;
-            }
-            if (1 == display_info)
-            {
-                printf("Device: %s\n"
-                       "Code size: %u kB\n"
-                       "Data size: %u kB\n",
-                       device_name, code_size / 1024, data_size / 1024
-                    );
-            }
-            if (!nocode && (1 == erase))
-            {
-                if (1 <= verbose_level)
+            if (!debug) {
+                rc = rl78_cmd_reset(fd);
+                if (0 > rc)
                 {
-                    printf("Erase code flash\n");
-                }
-                rc = rl78_erase(fd, CODE_OFFSET, code_size);
-                if (0 != rc)
-                {
-                    fprintf(stderr, "Code flash erase failed\n");
+                    fprintf(stderr, "Synchronization failed\n");
                     retcode = EIO;
                     break;
                 }
-            }
-            if (!nodata && (1 == erase && data_size))
-            {
-                if (1 <= verbose_level)
+                char device_name[11];
+                unsigned int code_size, data_size;
+                rc = rl78_cmd_silicon_signature(fd, device_name, &code_size, &data_size);
+                if (0 > rc)
                 {
-                    printf("Erase data flash\n");
-                }
-                rc = rl78_erase(fd, DATA_OFFSET, data_size);
-                if (0 != rc)
-                {
-                    fprintf(stderr, "Data flash erase failed\n");
+                    fprintf(stderr, "Silicon signature read failed\n");
                     retcode = EIO;
                     break;
                 }
-            }
-            unsigned char code[code_size];
-            unsigned char data[data_size];
-            if (1 == write
-                || 1 == verify)
-            {
-                memset(code, 0xFF, sizeof code);
-                memset(data, 0xFF, sizeof data);
-                if (1 <= verbose_level)
+                if (1 == display_info)
                 {
-                    printf("Read file \"%s\"\n", filename);
+                    printf("Device: %s\n"
+                        "Code size: %u kB\n"
+                        "Data size: %u kB\n",
+                        device_name, code_size / 1024, data_size / 1024
+                        );
                 }
-                rc = srec_read(filename, code, code_size, data, data_size);
-                if (0 != rc)
+                if (!nocode && (1 == erase))
                 {
-                    fprintf(stderr, "Read failed\n");
-                    retcode = EIO;
+                    if (1 <= verbose_level)
+                    {
+                        printf("Erase code flash\n");
+                    }
+                    rc = rl78_erase(fd, CODE_OFFSET, code_size);
+                    if (0 != rc)
+                    {
+                        fprintf(stderr, "Code flash erase failed\n");
+                        retcode = EIO;
+                        break;
+                    }
+                }
+                if (!nodata && (1 == erase && data_size))
+                {
+                    if (1 <= verbose_level)
+                    {
+                        printf("Erase data flash\n");
+                    }
+                    rc = rl78_erase(fd, DATA_OFFSET, data_size);
+                    if (0 != rc)
+                    {
+                        fprintf(stderr, "Data flash erase failed\n");
+                        retcode = EIO;
+                        break;
+                    }
+                }
+                unsigned char code[code_size];
+                unsigned char data[data_size];
+                if (1 == write
+                    || 1 == verify)
+                {
+                    memset(code, 0xFF, sizeof code);
+                    memset(data, 0xFF, sizeof data);
+                    if (1 <= verbose_level)
+                    {
+                        printf("Read file \"%s\"\n", filename);
+                    }
+                    rc = srec_read(filename, code, code_size, data, data_size);
+                    if (0 != rc)
+                    {
+                        fprintf(stderr, "Read failed\n");
+                        retcode = EIO;
+                        break;
+                    }
+                }
+                if (!nocode && (1 == write))
+                {
+                    if (1 <= verbose_level)
+                    {
+                        printf("Write code flash\n");
+                    }
+                    rc = rl78_program(fd, CODE_OFFSET, code, code_size);
+                    if (0 != rc)
+                    {
+                        fprintf(stderr, "Code flash write failed\n");
+                        retcode = EIO;
+                        break;
+                    }
+                }
+                if (!nodata && (1 == write && data_size))
+                {
+                    if (1 <= verbose_level)
+                    {
+                        printf("Write data flash\n");
+                    }
+                    rc = rl78_program(fd, DATA_OFFSET, data, data_size);
+                    if (0 != rc)
+                    {
+                        fprintf(stderr, "Data flash write failed\n");
+                        retcode = EIO;
+                        break;
+                    }
+                }
+                if (!nocode && (1 == verify))
+                {
+                    if (1 <= verbose_level)
+                    {
+                        printf("Verify Code flash\n");
+                    }
+                    rc = rl78_verify(fd, CODE_OFFSET, code, code_size);
+                    if (0 != rc)
+                    {
+                        fprintf(stderr, "Code flash verification failed\n");
+                        retcode = EIO;
+                        break;
+                    }
+                }
+                if (!nodata && (1 == verify && data_size))
+                {
+                    if (1 <= verbose_level)
+                    {
+                        printf("Verify Data flash\n");
+                    }
+                    rc = rl78_verify(fd, DATA_OFFSET, data, data_size);
+                    if (0 != rc)
+                    {
+                        fprintf(stderr, "Data flash verification failed\n");
+                        retcode = EIO;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                rl78_debug_mode(fd, password);
+                rc = rl78_read(fd, filename);
+                if (rc != 0)
+                {
+                    retcode = rc;
                     break;
                 }
-            }
-            if (!nocode && (1 == write))
-            {
-                if (1 <= verbose_level)
-                {
-                    printf("Write code flash\n");
-                }
-                rc = rl78_program(fd, CODE_OFFSET, code, code_size);
-                if (0 != rc)
-                {
-                    fprintf(stderr, "Code flash write failed\n");
-                    retcode = EIO;
-                    break;
-                }
-            }
-            if (!nodata && (1 == write && data_size))
-            {
-                if (1 <= verbose_level)
-                {
-                    printf("Write data flash\n");
-                }
-                rc = rl78_program(fd, DATA_OFFSET, data, data_size);
-                if (0 != rc)
-                {
-                    fprintf(stderr, "Data flash write failed\n");
-                    retcode = EIO;
-                    break;
-                }
-            }
-            if (!nocode && (1 == verify))
-            {
-                if (1 <= verbose_level)
-                {
-                    printf("Verify Code flash\n");
-                }
-                rc = rl78_verify(fd, CODE_OFFSET, code, code_size);
-                if (0 != rc)
-                {
-                    fprintf(stderr, "Code flash verification failed\n");
-                    retcode = EIO;
-                    break;
-                }
-            }
-            if (!nodata && (1 == verify && data_size))
-            {
-                if (1 <= verbose_level)
-                {
-                    printf("Verify Data flash\n");
-                }
-                rc = rl78_verify(fd, DATA_OFFSET, data, data_size);
-                if (0 != rc)
-                {
-                    fprintf(stderr, "Data flash verification failed\n");
-                    retcode = EIO;
-                    break;
-                }
+                rl78_reset(fd, mode);
             }
         }
         if (1 == terminal)

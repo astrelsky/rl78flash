@@ -66,6 +66,7 @@
 
 #define SET_MODE_1WIRE_UART 0x3A
 #define SET_MODE_2WIRE_UART 0x00
+#define SET_MODE_DEBUGGER   0xC5
 
 #define RL78_MIN_VOLTAGE    1.8f
 #define RL78_MAX_VOLTAGE    5.5f
@@ -74,9 +75,10 @@
 #define MODE_UART_1       0
 #define MODE_UART_2       MODE_UART
 #define MODE_RESET        2
+#define MODE_DEBUG        4
 #define MODE_RESET_DTR    0
 #define MODE_RESET_RTS    MODE_RESET
-#define MODE_MAX_VALUE    (MODE_UART | MODE_RESET)
+#define MODE_MAX_VALUE    (MODE_UART | MODE_RESET | MODE_DEBUG)
 #define MODE_MIN_VALUE    0
 #define MODE_INVERT_RESET 0x80
 
@@ -99,5 +101,7 @@ int rl78_cmd_verify(port_handle_t fd, unsigned int address_start, unsigned int a
 int rl78_program(port_handle_t fd, unsigned int address, const void *data, unsigned int size);
 int rl78_erase(port_handle_t fd, unsigned int start_address, unsigned int size);
 int rl78_verify(port_handle_t fd, unsigned int address, const void *data, unsigned int size);
+void rl78_debug_mode(port_handle_t fd, const char *password);
+int rl78_read(port_handle_t fd, const char *path);
 
 #endif  // RL78_H__
